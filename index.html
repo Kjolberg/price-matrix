@@ -1,0 +1,834 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>PriceMatrix — AS400 Pricing Tool</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,600;1,9..144,300&display=swap" rel="stylesheet"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  :root {
+    --bg: #0f0f0e; --surface: #1a1a18; --surface2: #242422; --border: #2e2e2b;
+    --accent: #c8a96e; --accent2: #7eb8a4; --danger: #c06b6b;
+    --text: #e8e6df; --text-muted: #7a7870; --text-dim: #4a4845;
+    --cell-edited: rgba(200,169,110,0.08); --env-test: #7eb8a4; --env-prod: #c06b6b;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background:var(--bg); color:var(--text); font-family:'DM Mono',monospace; font-size:13px; min-height:100vh; overflow-x:hidden; }
+
+  /* ENV BANNER */
+  #envBanner { display:flex; align-items:center; justify-content:center; gap:10px; padding:5px 32px; font-size:11px; letter-spacing:0.1em; text-transform:uppercase; font-weight:500; transition:background 0.3s; }
+  #envBanner.test { background:rgba(126,184,164,0.15); color:var(--env-test); border-bottom:1px solid rgba(126,184,164,0.25); }
+  #envBanner.prod { background:rgba(192,107,107,0.15); color:var(--env-prod); border-bottom:1px solid rgba(192,107,107,0.3); animation:prodPulse 3s ease infinite; }
+  @keyframes prodPulse { 0%,100%{background:rgba(192,107,107,0.15)} 50%{background:rgba(192,107,107,0.22)} }
+  .env-pill { padding:2px 10px; border-radius:20px; font-size:10px; font-weight:600; }
+  #envBanner.test .env-pill { background:rgba(126,184,164,0.2); border:1px solid var(--env-test); }
+  #envBanner.prod .env-pill { background:rgba(192,107,107,0.2); border:1px solid var(--env-prod); }
+
+  /* HEADER */
+  header { display:flex; align-items:center; justify-content:space-between; padding:14px 32px; border-bottom:1px solid var(--border); background:var(--surface); position:sticky; top:0; z-index:100; flex-wrap:wrap; gap:10px; }
+  .logo { font-family:'Fraunces',serif; font-size:20px; font-weight:600; color:var(--accent); letter-spacing:-0.5px; }
+  .logo span { color:var(--text-muted); font-weight:300; font-style:italic; }
+  .header-right { display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+  .status-dot { width:7px; height:7px; border-radius:50%; background:var(--accent2); box-shadow:0 0 6px var(--accent2); animation:pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+  .status-dot.disconnected { background:var(--danger); box-shadow:0 0 6px var(--danger); animation:none; }
+  .status-dot.connecting { background:var(--accent); box-shadow:0 0 6px var(--accent); }
+  .status-label { color:var(--text-muted); font-size:11px; }
+  .env-switcher { display:flex; align-items:center; border:1px solid var(--border); border-radius:4px; overflow:hidden; }
+  .env-btn { padding:5px 14px; font-family:'DM Mono',monospace; font-size:10px; letter-spacing:0.08em; text-transform:uppercase; cursor:pointer; border:none; background:var(--surface2); color:var(--text-muted); transition:all 0.2s; }
+  .env-btn.active-test { background:rgba(126,184,164,0.2); color:var(--env-test); }
+  .env-btn.active-prod { background:rgba(192,107,107,0.2); color:var(--env-prod); }
+
+  /* TABS */
+  .tabs-wrapper { background:var(--surface); border-bottom:1px solid var(--border); overflow-x:auto; scrollbar-width:thin; scrollbar-color:var(--border) transparent; }
+  .tabs { display:flex; padding:0 32px; min-width:max-content; }
+  .tab { padding:11px 16px; cursor:pointer; color:var(--text-muted); font-size:11px; letter-spacing:0.06em; text-transform:uppercase; border-bottom:2px solid transparent; transition:all 0.2s; white-space:nowrap; }
+  .tab:hover { color:var(--text); }
+  .tab.active { color:var(--accent); border-bottom-color:var(--accent); }
+
+  /* API CONFIG BAR */
+  .api-config-bar { display:flex; align-items:center; gap:12px; padding:7px 32px; background:rgba(200,169,110,0.03); border-bottom:1px solid var(--border); font-size:11px; flex-wrap:wrap; }
+  .api-config-bar label { color:var(--text-dim); }
+  .api-url-display { font-size:11px; color:var(--text-muted); background:var(--surface2); padding:3px 10px; border-radius:3px; border:1px solid var(--border); min-width:220px; }
+  .api-ping { font-size:10px; color:var(--text-dim); }
+  .api-ping.ok { color:var(--accent2); }
+  .api-ping.err { color:var(--danger); }
+
+  /* TOOLBAR */
+  .toolbar { display:flex; align-items:center; gap:10px; padding:12px 32px; background:var(--surface2); border-bottom:1px solid var(--border); flex-wrap:wrap; }
+  .toolbar-label { color:var(--text-muted); font-size:11px; letter-spacing:0.05em; }
+  select, input[type=number], input[type=text], input[type=date] {
+    background:var(--surface); border:1px solid var(--border); color:var(--text);
+    padding:6px 10px; font-family:'DM Mono',monospace; font-size:12px; border-radius:4px; outline:none; transition:border-color 0.2s;
+  }
+  select:focus, input:focus { border-color:var(--accent); }
+  select option { background:var(--surface2); }
+  .btn { padding:7px 13px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:'DM Mono',monospace; font-size:11px; letter-spacing:0.06em; cursor:pointer; border-radius:4px; text-transform:uppercase; transition:all 0.15s; white-space:nowrap; }
+  .btn:hover { border-color:var(--accent); color:var(--accent); }
+  .btn.primary { background:var(--accent); border-color:var(--accent); color:#1a1510; font-weight:500; }
+  .btn.primary:hover { background:#d4b87a; }
+  .btn.primary:disabled { opacity:0.5; cursor:not-allowed; }
+  .btn.danger { border-color:var(--danger); color:var(--danger); }
+  .btn.danger:hover { background:rgba(192,107,107,0.1); }
+  .btn.excel { border-color:#4a7c59; color:#6dab88; }
+  .btn.excel:hover { background:rgba(77,124,89,0.12); }
+  .spacer { flex:1; }
+  .change-badge { background:rgba(200,169,110,0.15); border:1px solid rgba(200,169,110,0.3); color:var(--accent); padding:4px 10px; border-radius:20px; font-size:11px; display:none; }
+  .change-badge.visible { display:block; }
+
+  /* BULK FILL */
+  .fill-bar { background:rgba(200,169,110,0.04); border:1px dashed rgba(200,169,110,0.2); border-radius:4px; padding:10px 14px; display:none; align-items:center; gap:12px; margin-bottom:14px; flex-wrap:wrap; }
+  .fill-bar label { color:var(--text-muted); font-size:11px; }
+  .fill-bar input { width:110px; }
+
+  /* MAIN & MATRIX */
+  .main { padding:20px 32px 80px; }
+  .matrix-wrapper { overflow:auto; max-height:calc(100vh - 290px); border:1px solid var(--border); border-radius:6px; background:var(--surface); position:relative; }
+  table { border-collapse:collapse; width:max-content; min-width:100%; }
+  .corner-cell { position:sticky; top:0; left:0; background:var(--bg); z-index:30; padding:10px 14px; border-right:1px solid var(--border); border-bottom:1px solid var(--border); min-width:100px; }
+  .corner-inner { display:flex; flex-direction:column; gap:2px; font-size:10px; color:var(--text-dim); letter-spacing:0.05em; text-transform:uppercase; }
+  .axis-h { text-align:right; }
+  .axis-divider { width:100%; height:1px; background:var(--border); transform:rotate(-25deg) translateY(2px); margin:2px 0; }
+  .col-header { position:sticky; top:0; background:var(--bg); z-index:20; padding:8px 6px; text-align:center; font-size:11px; color:var(--text-muted); border-bottom:1px solid var(--border); border-right:1px solid var(--border); white-space:nowrap; min-width:88px; }
+  .col-header .unit { font-size:9px; color:var(--text-dim); display:block; }
+  .row-header { position:sticky; left:0; background:var(--bg); z-index:10; padding:6px 14px; font-size:11px; color:var(--text-muted); border-right:1px solid var(--border); border-bottom:1px solid var(--border); white-space:nowrap; text-align:right; }
+  .row-header .unit { font-size:9px; color:var(--text-dim); }
+  td.price-cell { border-right:1px solid var(--border); border-bottom:1px solid var(--border); padding:0; position:relative; }
+  td.price-cell input { width:100%; height:100%; padding:7px 8px 7px 18px; background:transparent; border:none; color:var(--text); font-family:'DM Mono',monospace; font-size:12px; text-align:right; transition:background 0.15s; min-width:88px; }
+  td.price-cell input:focus { background:rgba(200,169,110,0.05); outline:2px solid var(--accent); outline-offset:-2px; color:#fff; }
+  td.price-cell.edited { background:var(--cell-edited); }
+  td.price-cell.edited::after { content:''; position:absolute; top:3px; right:3px; width:4px; height:4px; border-radius:50%; background:var(--accent); }
+  td.price-cell.from-excel { background:rgba(77,124,89,0.09); }
+  td.price-cell.from-excel::after { background:#6dab88 !important; }
+  td.price-cell.anomaly input { color:var(--danger); }
+  td.price-cell.anomaly { background:rgba(192,107,107,0.06); }
+  td.price-cell .currency-prefix { position:absolute; left:6px; top:50%; transform:translateY(-50%); font-size:10px; color:var(--text-dim); pointer-events:none; }
+
+  /* LOADING OVERLAY */
+  .matrix-loading { display:none; position:absolute; inset:0; background:rgba(15,15,14,0.75); z-index:50; align-items:center; justify-content:center; border-radius:6px; flex-direction:column; gap:10px; color:var(--text-muted); font-size:12px; }
+  .matrix-loading.show { display:flex; }
+  .spinner { width:20px; height:20px; border:2px solid var(--border); border-top-color:var(--accent); border-radius:50%; animation:spin 0.7s linear infinite; }
+  @keyframes spin { to{transform:rotate(360deg)} }
+
+  /* FOOTER */
+  .footer { display:flex; align-items:center; justify-content:space-between; padding:12px 32px; border-top:1px solid var(--border); background:var(--surface); position:fixed; bottom:0; left:0; right:0; z-index:90; flex-wrap:wrap; gap:8px; }
+  .footer-info { color:var(--text-muted); font-size:11px; }
+  .footer-info strong { color:var(--text); }
+
+  /* TOAST */
+  #toast { position:fixed; bottom:70px; right:32px; background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:12px 18px; border-radius:6px; font-size:12px; opacity:0; transform:translateY(10px); transition:all 0.3s; z-index:999; max-width:340px; }
+  #toast.show { opacity:1; transform:translateY(0); }
+  #toast.success { border-color:var(--accent2); color:var(--accent2); }
+  #toast.error { border-color:var(--danger); color:var(--danger); }
+
+  /* MODALS */
+  .modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.75); z-index:200; align-items:center; justify-content:center; }
+  .modal-overlay.open { display:flex; }
+  .modal { background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:28px; width:520px; max-width:95vw; max-height:92vh; overflow-y:auto; }
+  .modal h2 { font-family:'Fraunces',serif; font-size:18px; font-weight:600; color:var(--accent); margin-bottom:6px; }
+  .modal p { color:var(--text-muted); font-size:12px; margin-bottom:18px; line-height:1.6; }
+  .modal-fields { display:flex; flex-direction:column; gap:12px; margin-bottom:18px; }
+  .modal-field label { display:block; font-size:10px; color:var(--text-muted); letter-spacing:0.06em; text-transform:uppercase; margin-bottom:4px; }
+  .modal-field input, .modal-field select { width:100%; }
+  .modal-actions { display:flex; gap:10px; justify-content:flex-end; }
+  .range-inputs { display:flex; gap:8px; align-items:center; }
+  .range-inputs span { color:var(--text-muted); font-size:11px; }
+  .env-section { margin-bottom:20px; }
+  .env-section-title { font-size:10px; letter-spacing:0.08em; text-transform:uppercase; color:var(--text-dim); margin-bottom:10px; padding-bottom:6px; border-bottom:1px solid var(--border); }
+
+  /* EXCEL MODAL */
+  .upload-zone { border:2px dashed var(--border); border-radius:6px; padding:30px 20px; text-align:center; cursor:pointer; transition:all 0.2s; margin-bottom:14px; }
+  .upload-zone:hover, .upload-zone.drag-over { border-color:var(--accent); background:rgba(200,169,110,0.04); }
+  .upload-zone .upload-icon { font-size:28px; margin-bottom:8px; }
+  .upload-zone p { color:var(--text-muted); font-size:12px; }
+  .upload-zone strong { color:var(--accent); }
+  #excelFileInput { display:none; }
+  .preview-table-wrapper { overflow:auto; max-height:200px; border:1px solid var(--border); border-radius:4px; margin-bottom:12px; }
+  .preview-table { border-collapse:collapse; width:100%; font-size:11px; }
+  .preview-table th { background:var(--bg); color:var(--text-muted); padding:6px 10px; border-bottom:1px solid var(--border); text-align:left; position:sticky; top:0; }
+  .preview-table td { padding:5px 10px; border-bottom:1px solid var(--border); color:var(--text); }
+  .preview-table tr:last-child td { border-bottom:none; }
+  .preview-stats { font-size:11px; color:var(--text-muted); margin-bottom:10px; }
+  .preview-stats strong { color:var(--accent); }
+  .template-note { background:rgba(200,169,110,0.05); border:1px solid rgba(200,169,110,0.18); border-radius:4px; padding:10px 14px; font-size:11px; color:var(--text-muted); margin-bottom:14px; line-height:1.8; }
+
+  /* CHANGELOG */
+  .changelog-panel { display:none; position:fixed; right:0; top:0; bottom:0; width:290px; background:var(--surface); border-left:1px solid var(--border); z-index:150; flex-direction:column; animation:slideIn 0.25s ease; }
+  @keyframes slideIn { from{transform:translateX(100%)} to{transform:translateX(0)} }
+  .changelog-panel.open { display:flex; }
+  .changelog-header { display:flex; align-items:center; justify-content:space-between; padding:16px 20px; border-bottom:1px solid var(--border); }
+  .changelog-header h3 { font-family:'Fraunces',serif; font-size:15px; color:var(--accent); }
+  .changelog-body { flex:1; overflow-y:auto; padding:12px; }
+  .log-entry { padding:10px 12px; border-left:2px solid var(--border); margin-bottom:8px; font-size:11px; color:var(--text-muted); }
+  .log-entry .log-product { color:var(--text); font-size:12px; margin-bottom:2px; }
+  .log-entry .log-price { color:var(--accent); }
+  .log-entry .log-old { text-decoration:line-through; color:var(--text-dim); }
+  .log-entry.new { border-color:var(--accent); }
+  .log-entry.from-excel { border-color:#6dab88; }
+  .empty-log { color:var(--text-dim); font-size:11px; padding:20px 12px; }
+</style>
+</head>
+<body>
+
+<div id="envBanner" class="test">
+  <span class="env-pill" id="envPillText">TEST</span>
+  <span id="envBannerMsg">You are working in the TEST environment — safe to experiment</span>
+</div>
+
+<header>
+  <div class="logo">Price<span>Matrix</span></div>
+  <div class="header-right">
+    <div class="env-switcher">
+      <button class="env-btn active-test" id="btnTest" onclick="switchEnv('test')">⬡ Test</button>
+      <button class="env-btn" id="btnProd" onclick="switchEnv('prod')">⬡ Prod</button>
+    </div>
+    <button class="btn" style="font-size:10px;padding:5px 10px;" onclick="openEnvModal()">⚙ Env Settings</button>
+    <div style="display:flex;align-items:center;gap:8px;">
+      <div class="status-dot connecting" id="statusDot"></div>
+      <span class="status-label" id="statusLabel">CONNECTING…</span>
+    </div>
+    <span class="status-label" id="clock"></span>
+  </div>
+</header>
+
+<div class="api-config-bar">
+  <label>API Endpoint:</label>
+  <span class="api-url-display" id="apiUrlDisplay">http://localhost:3000</span>
+  <button class="btn" style="padding:4px 10px;font-size:10px;" onclick="checkHealth()">↻ Test</button>
+  <span class="api-ping" id="apiPing">—</span>
+  <div class="spacer"></div>
+  <span style="font-size:10px;color:var(--text-dim);" id="lastSyncLabel">Never synced</span>
+</div>
+
+<div class="tabs-wrapper"><div class="tabs" id="productTabs"></div></div>
+
+<div class="toolbar">
+  <span class="toolbar-label">Currency</span>
+  <select id="currencySelect">
+    <option value="€">€ EUR</option><option value="$">$ USD</option><option value="£">£ GBP</option>
+  </select>
+  <span class="toolbar-label">Fabric</span>
+  <select id="fabricSelect">
+    <option>Standard</option><option>Blackout</option><option>Sheer</option>
+    <option>Premium</option><option>Motorised</option><option>Fire Retardant</option><option>Waterproof</option>
+  </select>
+  <div class="spacer"></div>
+  <span class="change-badge" id="changeBadge">● <span id="changeCount">0</span> unsaved</span>
+  <button class="btn excel" onclick="openExcelModal()">⬆ Excel Upload</button>
+  <button class="btn" onclick="bulkFillToggle()">⊞ Bulk Fill</button>
+  <button class="btn" onclick="toggleChangelog()">↗ Changes</button>
+  <button class="btn" onclick="exportCSV()">↓ CSV</button>
+  <button class="btn danger" onclick="clearEdits()">✕ Clear</button>
+  <button class="btn primary" id="pushBtn" onclick="openSubmitModal()">▶ Push to AS400</button>
+</div>
+
+<div class="main">
+  <div id="bulkFillBar" class="fill-bar">
+    <label>Fill empty cells:</label>
+    <input type="number" id="bulkValue" placeholder="Price…" step="0.01"/>
+    <button class="btn" onclick="applyBulkFill()">Apply</button>
+    <span style="width:1px;height:20px;background:var(--border);display:inline-block;margin:0 4px;"></span>
+    <label>Increase all by %:</label>
+    <input type="number" id="bulkPct" placeholder="e.g. 10" step="1"/>
+    <button class="btn" onclick="applyPctIncrease()">Apply</button>
+  </div>
+  <div class="matrix-wrapper">
+    <div class="matrix-loading" id="matrixLoading">
+      <div class="spinner"></div>
+      <span id="loadingMsg">Loading from AS400…</span>
+    </div>
+    <table id="matrixTable"></table>
+  </div>
+</div>
+
+<div class="footer">
+  <div class="footer-info">
+    <strong id="productLabel">—</strong> &nbsp;·&nbsp;
+    <span id="footerFabric">Standard</span> &nbsp;·&nbsp;
+    ENV: <strong id="footerEnv" style="color:var(--env-test);">TEST</strong> &nbsp;·&nbsp;
+    Rows:<strong id="rowCount">—</strong> Cols:<strong id="colCount">—</strong> Cells:<strong id="cellCount">—</strong>
+  </div>
+  <button class="btn" onclick="openDimensionModal()">+ Ranges</button>
+</div>
+
+<div id="toast"></div>
+
+<!-- ENV SETTINGS MODAL -->
+<div class="modal-overlay" id="envModal">
+  <div class="modal">
+    <h2>Environment Settings</h2>
+    <p>Configure separate API URLs and AS400 tables for Test and Production. Switch environments using the header toggle.</p>
+    <div class="env-section">
+      <div class="env-section-title">🟢 Test Environment</div>
+      <div class="modal-fields">
+        <div class="modal-field"><label>API Base URL</label><input type="text" id="testApiUrl" value="http://localhost:3000"/></div>
+        <div class="modal-field"><label>AS400 Table</label><input type="text" id="testTable" value="PRICTST/PRICMST"/></div>
+      </div>
+    </div>
+    <div class="env-section">
+      <div class="env-section-title" style="color:var(--danger);">🔴 Production Environment</div>
+      <div class="modal-fields">
+        <div class="modal-field"><label>API Base URL</label><input type="text" id="prodApiUrl" value="http://prod-server:3000"/></div>
+        <div class="modal-field"><label>AS400 Table</label><input type="text" id="prodTable" value="PRICLIB/PRICMST"/></div>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal('envModal')">Cancel</button>
+      <button class="btn primary" onclick="saveEnvSettings()">Save Settings</button>
+    </div>
+  </div>
+</div>
+
+<!-- SUBMIT MODAL -->
+<div class="modal-overlay" id="submitModal">
+  <div class="modal">
+    <h2>Push to AS400</h2>
+    <p id="submitModalDesc"></p>
+    <div class="modal-fields">
+      <div class="modal-field"><label>Target AS400 Table</label><input type="text" id="as400Table"/></div>
+      <div class="modal-field"><label>Submitted By (AS400 username)</label><input type="text" id="submittedBy" placeholder="e.g. JSMITH"/></div>
+      <div class="modal-field"><label>Effective Date</label><input type="date" id="effectiveDate"/></div>
+      <div class="modal-field"><label>Notes (audit log)</label><input type="text" id="submitNotes" placeholder="e.g. Q2 price revision"/></div>
+    </div>
+    <div id="prodConfirmRow" style="display:none;margin-bottom:14px;padding:12px;border:1px solid var(--danger);border-radius:4px;background:rgba(192,107,107,0.06);">
+      <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:12px;color:var(--danger);">
+        <input type="checkbox" id="prodConfirmChk"/>
+        I confirm this push targets PRODUCTION and prices have been reviewed.
+      </label>
+    </div>
+    <div id="submitSummary" style="font-size:11px;color:var(--text-muted);margin-bottom:14px;line-height:1.6;"></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal('submitModal')">Cancel</button>
+      <button class="btn primary" id="confirmPushBtn" onclick="submitToAS400()">Confirm Push</button>
+    </div>
+  </div>
+</div>
+
+<!-- DIMENSION MODAL -->
+<div class="modal-overlay" id="dimensionModal">
+  <div class="modal">
+    <h2>Edit Dimension Ranges</h2>
+    <p>Set height and breadth min/max/step values. The matrix will be rebuilt.</p>
+    <div class="modal-fields">
+      <div class="modal-field">
+        <label>Height (cm) — min / max / step</label>
+        <div class="range-inputs">
+          <input type="number" id="hMin" value="50" step="10" style="width:80px;"/>
+          <span>to</span><input type="number" id="hMax" value="300" step="10" style="width:80px;"/>
+          <span>step</span><input type="number" id="hStep" value="25" step="5" style="width:70px;"/>
+        </div>
+      </div>
+      <div class="modal-field">
+        <label>Breadth (cm) — min / max / step</label>
+        <div class="range-inputs">
+          <input type="number" id="bMin" value="50" step="10" style="width:80px;"/>
+          <span>to</span><input type="number" id="bMax" value="400" step="10" style="width:80px;"/>
+          <span>step</span><input type="number" id="bStep" value="25" step="5" style="width:70px;"/>
+        </div>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal('dimensionModal')">Cancel</button>
+      <button class="btn primary" onclick="applyDimensions()">Rebuild Matrix</button>
+    </div>
+  </div>
+</div>
+
+<!-- EXCEL UPLOAD MODAL -->
+<div class="modal-overlay" id="excelModal">
+  <div class="modal">
+    <h2>⬆ Excel Upload</h2>
+    <p>Upload an .xlsx file to populate the price matrix. Prices are merged into the grid — cells not in the file are untouched.</p>
+    <div class="template-note">
+      📋 <strong>Required columns (row 1 = headers, any order):</strong><br/>
+      <code>Product</code> &nbsp;·&nbsp; <code>Fabric</code> &nbsp;·&nbsp; <code>Height_cm</code> &nbsp;·&nbsp; <code>Breadth_cm</code> &nbsp;·&nbsp; <code>Price</code><br/>
+      Product names must match the product tabs exactly. Extra columns are ignored.<br/><br/>
+      <button class="btn excel" onclick="downloadTemplate()">↓ Download Template</button>
+    </div>
+    <div class="upload-zone" id="uploadZone"
+      onclick="document.getElementById('excelFileInput').click()"
+      ondragover="handleDragOver(event)" ondrop="handleDrop(event)"
+      ondragleave="this.classList.remove('drag-over')">
+      <div class="upload-icon">📂</div>
+      <p>Click to browse or <strong>drag & drop</strong> your Excel file here</p>
+      <p style="font-size:10px;margin-top:6px;color:var(--text-dim);">.xlsx or .xls · max 5 MB</p>
+    </div>
+    <input type="file" id="excelFileInput" accept=".xlsx,.xls" onchange="handleFileSelect(event)"/>
+    <div id="excelPreview" style="display:none;">
+      <div class="preview-stats" id="previewStats"></div>
+      <div class="preview-table-wrapper"><table class="preview-table" id="previewTable"></table></div>
+    </div>
+    <div id="excelErrors" style="display:none;color:var(--danger);font-size:11px;margin-bottom:12px;line-height:1.8;"></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal('excelModal');resetExcelModal()">Cancel</button>
+      <button class="btn excel" id="applyExcelBtn" onclick="applyExcelData()" disabled style="opacity:0.4;cursor:not-allowed;">Apply to Matrix</button>
+    </div>
+  </div>
+</div>
+
+<!-- CHANGELOG PANEL -->
+<div class="changelog-panel" id="changelogPanel">
+  <div class="changelog-header">
+    <h3>Change Log</h3>
+    <button class="btn" onclick="toggleChangelog()">✕</button>
+  </div>
+  <div class="changelog-body" id="changelogBody"><div class="empty-log">No changes yet.</div></div>
+</div>
+
+<script>
+// ─── CONFIG & STATE ──────────────────────────────────────────────────────────
+const PRODUCTS = [
+  'Curtains','Roller Blinds','Roman Blinds','Venetian Blinds','Vertical Blinds',
+  'Insect Screens','Pleated Screens','Frames','Pelmets','Tracks & Poles','Accessories'
+];
+
+let envConfig = {
+  test: { apiUrl:'http://localhost:3000',    table:'PRICTST/PRICMST' },
+  prod: { apiUrl:'http://prod-server:3000',  table:'PRICLIB/PRICMST' }
+};
+let currentEnv  = 'test';
+let activeProduct = 0;
+let currency    = '€';
+let fabric      = 'Standard';
+let dims        = { hMin:50, hMax:300, hStep:25, bMin:50, bMax:400, bStep:25 };
+
+const priceData   = {};
+const editedCells = new Set();
+const excelCells  = new Set();
+const changeLog   = [];
+let   parsedExcelRows = [];
+let   heights = [], breadths = [];
+
+// ─── ENVIRONMENT ─────────────────────────────────────────────────────────────
+function switchEnv(env) {
+  if (env === 'prod') {
+    const ok = confirm('⚠️ Switch to PRODUCTION?\n\nAny prices pushed will update the live AS400 database.\n\nContinue?');
+    if (!ok) return;
+  }
+  currentEnv = env;
+  applyEnvUI();
+  checkHealth();
+  showToast(`Switched to ${env.toUpperCase()}`, env === 'prod' ? 'error' : 'success');
+}
+
+function applyEnvUI() {
+  const isTest = currentEnv === 'test';
+  document.getElementById('envBanner').className   = currentEnv;
+  document.getElementById('envPillText').textContent = currentEnv.toUpperCase();
+  document.getElementById('envBannerMsg').textContent = isTest
+    ? 'You are working in the TEST environment — safe to experiment'
+    : '⚠  PRODUCTION ENVIRONMENT — all changes go to the live database';
+  document.getElementById('btnTest').className = 'env-btn' + (isTest  ? ' active-test' : '');
+  document.getElementById('btnProd').className = 'env-btn' + (!isTest ? ' active-prod' : '');
+  document.getElementById('footerEnv').textContent  = currentEnv.toUpperCase();
+  document.getElementById('footerEnv').style.color  = isTest ? 'var(--env-test)' : 'var(--env-prod)';
+  document.getElementById('apiUrlDisplay').textContent = envConfig[currentEnv].apiUrl;
+  const pb = document.getElementById('pushBtn');
+  pb.style.background  = isTest ? '' : 'var(--env-prod)';
+  pb.style.borderColor = isTest ? '' : 'var(--env-prod)';
+  pb.textContent       = isTest ? '▶ Push to AS400' : '⚠ Push to PROD';
+}
+
+function openEnvModal() {
+  document.getElementById('testApiUrl').value = envConfig.test.apiUrl;
+  document.getElementById('testTable').value  = envConfig.test.table;
+  document.getElementById('prodApiUrl').value = envConfig.prod.apiUrl;
+  document.getElementById('prodTable').value  = envConfig.prod.table;
+  document.getElementById('envModal').classList.add('open');
+}
+function saveEnvSettings() {
+  envConfig.test.apiUrl = document.getElementById('testApiUrl').value.trim().replace(/\/$/,'');
+  envConfig.test.table  = document.getElementById('testTable').value.trim();
+  envConfig.prod.apiUrl = document.getElementById('prodApiUrl').value.trim().replace(/\/$/,'');
+  envConfig.prod.table  = document.getElementById('prodTable').value.trim();
+  closeModal('envModal');
+  applyEnvUI(); checkHealth();
+  showToast('Environment settings saved.','success');
+}
+function apiBase() { return envConfig[currentEnv].apiUrl; }
+
+// ─── HELPERS ──────────────────────────────────────────────────────────────────
+function range(min,max,step){ const a=[]; for(let v=min;v<=max;v+=step) a.push(v); return a; }
+function cellKey(p,f,h,b){ return `${p}|${f}|${h}|${b}`; }
+
+// ─── MATRIX ───────────────────────────────────────────────────────────────────
+function buildMatrix() {
+  heights  = range(dims.hMin, dims.hMax, dims.hStep);
+  breadths = range(dims.bMin, dims.bMax, dims.bStep);
+  const table = document.getElementById('matrixTable');
+  table.innerHTML = '';
+
+  const thead = document.createElement('thead');
+  const hRow  = document.createElement('tr');
+  const corner = document.createElement('th');
+  corner.className = 'corner-cell';
+  corner.innerHTML = `<div class="corner-inner"><div class="axis-h">Breadth →</div><div class="axis-divider"></div><div>↓ Height</div></div>`;
+  hRow.appendChild(corner);
+  breadths.forEach(b => {
+    const th = document.createElement('th');
+    th.className = 'col-header';
+    th.innerHTML = `${b}<span class="unit">cm</span>`;
+    hRow.appendChild(th);
+  });
+  thead.appendChild(hRow); table.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+  heights.forEach(h => {
+    const tr = document.createElement('tr');
+    const rh = document.createElement('th');
+    rh.className = 'row-header';
+    rh.innerHTML = `${h}<span class="unit"> cm</span>`;
+    tr.appendChild(rh);
+    breadths.forEach(b => {
+      const td  = document.createElement('td');
+      td.className = 'price-cell';
+      td.dataset.h = h; td.dataset.b = b;
+      const pfx = document.createElement('span');
+      pfx.className = 'currency-prefix'; pfx.textContent = currency;
+      const key = cellKey(PRODUCTS[activeProduct], fabric, h, b);
+      const inp = document.createElement('input');
+      inp.type='number'; inp.step='0.01'; inp.min='0'; inp.placeholder='—';
+      inp.value = priceData[key] !== undefined ? priceData[key] : '';
+      if (editedCells.has(key)) td.classList.add('edited');
+      if (excelCells.has(key))  td.classList.add('from-excel');
+      inp.addEventListener('change', () => {
+        const old = priceData[key], val = parseFloat(inp.value);
+        if (!isNaN(val) && val >= 0) {
+          priceData[key] = val; editedCells.add(key); excelCells.delete(key);
+          td.classList.add('edited'); td.classList.remove('from-excel');
+          logChange(PRODUCTS[activeProduct],fabric,h,b,old,val,'manual');
+          checkAnomaly(td,h,b,val);
+        } else if (inp.value === '') {
+          delete priceData[key]; editedCells.delete(key); excelCells.delete(key);
+          td.classList.remove('edited','from-excel','anomaly');
+        }
+        updateChangeBadge();
+      });
+      td.appendChild(pfx); td.appendChild(inp); tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+
+  document.getElementById('productLabel').textContent = PRODUCTS[activeProduct];
+  document.getElementById('footerFabric').textContent = fabric;
+  document.getElementById('rowCount').textContent     = heights.length;
+  document.getElementById('colCount').textContent     = breadths.length;
+  document.getElementById('cellCount').textContent    = heights.length * breadths.length;
+  updateChangeBadge();
+}
+
+function checkAnomaly(td,h,b,val) {
+  const bi=breadths.indexOf(b), hi=heights.indexOf(h), nb=[];
+  [[-1,0],[1,0],[0,-1],[0,1]].forEach(([dh,db])=>{
+    const nh=heights[hi+dh], nb2=breadths[bi+db];
+    if(nh!==undefined&&nb2!==undefined){const nk=cellKey(PRODUCTS[activeProduct],fabric,nh,nb2);if(priceData[nk]!==undefined)nb.push(priceData[nk]);}
+  });
+  if(nb.length>=2){const avg=nb.reduce((a,c)=>a+c,0)/nb.length;if(val>avg*2.5||(avg>0&&val<avg*0.4)){td.classList.add('anomaly');td.title=`⚠ Avg neighbours: ${avg.toFixed(2)}`;}else{td.classList.remove('anomaly');td.title='';}}
+}
+
+// ─── CHANGE LOG ───────────────────────────────────────────────────────────────
+function logChange(p,f,h,b,old,nv,src='manual'){
+  changeLog.unshift({product:p,fab:f,h,b,oldVal:old,newVal:nv,source:src,time:new Date().toLocaleTimeString()});
+  renderChangelog();
+}
+function renderChangelog(){
+  const body=document.getElementById('changelogBody');
+  if(!changeLog.length){body.innerHTML='<div class="empty-log">No changes yet.</div>';return;}
+  body.innerHTML=changeLog.slice(0,60).map((e,i)=>`
+    <div class="log-entry ${i===0?'new':''} ${e.source==='excel'?'from-excel':''}">
+      <div class="log-product">${e.product}·${e.fab}${e.source==='excel'?' <span style="color:#6dab88;font-size:9px;">XLS</span>':''}</div>
+      <div>H:<strong>${e.h}</strong>×W:<strong>${e.b}</strong></div>
+      <div>${e.oldVal!==undefined?`<span class="log-old">${currency}${parseFloat(e.oldVal).toFixed(2)}</span>→`:'New: '}<span class="log-price">${currency}${parseFloat(e.newVal).toFixed(2)}</span></div>
+      <div style="color:var(--text-dim);font-size:10px;margin-top:2px;">${e.time}</div>
+    </div>`).join('');
+}
+function updateChangeBadge(){
+  const n=editedCells.size;
+  document.getElementById('changeCount').textContent=n;
+  document.getElementById('changeBadge').classList.toggle('visible',n>0);
+}
+
+// ─── TABS ─────────────────────────────────────────────────────────────────────
+function buildTabs(){
+  const c=document.getElementById('productTabs'); c.innerHTML='';
+  PRODUCTS.forEach((p,i)=>{
+    const t=document.createElement('div');
+    t.className='tab'+(i===activeProduct?' active':'');
+    t.textContent=p;
+    t.onclick=()=>{activeProduct=i;buildTabs();loadPrices(PRODUCTS[i],fabric);};
+    c.appendChild(t);
+  });
+}
+
+// ─── MODALS ───────────────────────────────────────────────────────────────────
+function closeModal(id){document.getElementById(id).classList.remove('open');}
+
+function openSubmitModal(){
+  if(!editedCells.size){showToast('No changes to submit.','error');return;}
+  const isProd=currentEnv==='prod';
+  document.getElementById('submitModalDesc').innerHTML=isProd
+    ?`<span style="color:var(--danger)">⚠ PRODUCTION push</span> — records go directly to the live AS400 database.`
+    :'Records will be written to the TEST AS400 table.';
+  document.getElementById('as400Table').value   = envConfig[currentEnv].table;
+  document.getElementById('effectiveDate').value = new Date().toISOString().split('T')[0];
+  document.getElementById('prodConfirmRow').style.display = isProd?'block':'none';
+  document.getElementById('prodConfirmChk').checked = false;
+  document.getElementById('submitSummary').textContent =
+    `${editedCells.size} cell(s) · ${PRODUCTS[activeProduct]} / ${fabric} · ENV: ${currentEnv.toUpperCase()}`;
+  document.getElementById('submitModal').classList.add('open');
+}
+
+function openDimensionModal(){
+  ['hMin','hMax','hStep','bMin','bMax','bStep'].forEach(id=>document.getElementById(id).value=dims[id]);
+  document.getElementById('dimensionModal').classList.add('open');
+}
+function applyDimensions(){
+  ['hMin','hMax','hStep','bMin','bMax','bStep'].forEach(id=>{dims[id]=parseInt(document.getElementById(id).value)||dims[id];});
+  closeModal('dimensionModal'); buildMatrix();
+  showToast('Matrix rebuilt.','success');
+}
+
+// ─── EXCEL UPLOAD ─────────────────────────────────────────────────────────────
+function openExcelModal(){resetExcelModal();document.getElementById('excelModal').classList.add('open');}
+function resetExcelModal(){
+  parsedExcelRows=[];
+  document.getElementById('excelFileInput').value='';
+  document.getElementById('excelPreview').style.display='none';
+  document.getElementById('excelErrors').style.display='none';
+  document.getElementById('excelErrors').innerHTML='';
+  document.getElementById('previewStats').innerHTML='';
+  document.getElementById('previewTable').innerHTML='';
+  const btn=document.getElementById('applyExcelBtn');
+  btn.disabled=true;btn.style.opacity='0.4';btn.style.cursor='not-allowed';
+}
+function handleDragOver(e){e.preventDefault();document.getElementById('uploadZone').classList.add('drag-over');}
+function handleDrop(e){e.preventDefault();document.getElementById('uploadZone').classList.remove('drag-over');const f=e.dataTransfer.files[0];if(f)processExcelFile(f);}
+function handleFileSelect(e){const f=e.target.files[0];if(f)processExcelFile(f);}
+
+function processExcelFile(file){
+  if(file.size>5*1024*1024){showToast('File too large (max 5MB)','error');return;}
+  const ext=file.name.split('.').pop().toLowerCase();
+  if(!['xlsx','xls'].includes(ext)){showToast('Please upload .xlsx or .xls','error');return;}
+  const reader=new FileReader();
+  reader.onload=e=>{
+    try{
+      const wb=XLSX.read(e.target.result,{type:'array'});
+      const ws=wb.Sheets[wb.SheetNames[0]];
+      const rows=XLSX.utils.sheet_to_json(ws,{defval:''});
+      validateAndPreviewExcel(rows,file.name);
+    }catch(err){showExcelError([`Could not parse file: ${err.message}`]);}
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function normaliseHdr(h){return String(h).toLowerCase().replace(/[\s_\-]/g,'');}
+
+function validateAndPreviewExcel(rows,filename){
+  const errors=[]; parsedExcelRows=[];
+  if(!rows.length){showExcelError(['File appears to be empty.']);return;}
+  const sample=rows[0], hMap={};
+  // Map headers flexibly
+  Object.keys(sample).forEach(h=>{
+    const n=normaliseHdr(h);
+    if(n==='product')                               hMap.product  = hMap.product  ||h;
+    if(n==='fabric')                                hMap.fabric   = hMap.fabric   ||h;
+    if(n==='heightcm'||n==='height')                hMap.height   = hMap.height   ||h;
+    if(n==='breadthcm'||n==='breadth'||n==='widthcm'||n==='width') hMap.breadth  = hMap.breadth  ||h;
+    if(n==='price')                                 hMap.price    = hMap.price    ||h;
+  });
+  const missing=(['product','fabric','height','breadth','price']).filter(f=>!hMap[f]);
+  if(missing.length){showExcelError([`Missing column(s): ${missing.join(', ')}`,`Found: ${Object.keys(sample).join(', ')}`]);return;}
+
+  let skipped=0;
+  rows.forEach((row,i)=>{
+    const product=String(row[hMap.product]||'').trim();
+    const fab    =String(row[hMap.fabric] ||'').trim();
+    const height =parseFloat(row[hMap.height]);
+    const breadth=parseFloat(row[hMap.breadth]);
+    const price  =parseFloat(row[hMap.price]);
+    if(!product&&!fab&&isNaN(height)){skipped++;return;}
+    if(!PRODUCTS.includes(product)){errors.push(`Row ${i+2}: Unknown product "${product}"`);return;}
+    if(isNaN(height)||height<=0)   {errors.push(`Row ${i+2}: Invalid height "${row[hMap.height]}"`);return;}
+    if(isNaN(breadth)||breadth<=0) {errors.push(`Row ${i+2}: Invalid breadth "${row[hMap.breadth]}"`);return;}
+    if(isNaN(price)||price<0)      {errors.push(`Row ${i+2}: Invalid price "${row[hMap.price]}"`);return;}
+    parsedExcelRows.push({product,fabric:fab,height,breadth,price});
+  });
+  if(errors.length>8) errors.splice(8,errors.length-8,`…and ${errors.length-8} more`);
+  if(errors.length){document.getElementById('excelErrors').innerHTML='⚠ Issues:<br>'+errors.join('<br>');document.getElementById('excelErrors').style.display='block';}
+  if(!parsedExcelRows.length){showExcelError(['No valid rows found.']);return;}
+
+  // Preview
+  document.getElementById('previewStats').innerHTML=`<strong>${filename}</strong> — <strong>${parsedExcelRows.length}</strong> valid rows${skipped?` · ${skipped} blank skipped`:''} · Showing first ${Math.min(10,parsedExcelRows.length)}`;
+  const tbl=document.getElementById('previewTable');
+  tbl.innerHTML=`<thead><tr><th>Product</th><th>Fabric</th><th>Height</th><th>Breadth</th><th>Price</th></tr></thead>`;
+  const tb=document.createElement('tbody');
+  parsedExcelRows.slice(0,10).forEach(r=>{
+    const tr=document.createElement('tr');
+    tr.innerHTML=`<td>${r.product}</td><td>${r.fabric}</td><td>${r.height}cm</td><td>${r.breadth}cm</td><td>${currency}${r.price.toFixed(2)}</td>`;
+    tb.appendChild(tr);
+  });
+  tbl.appendChild(tb);
+  document.getElementById('excelPreview').style.display='block';
+  const btn=document.getElementById('applyExcelBtn');
+  btn.disabled=false;btn.style.opacity='1';btn.style.cursor='pointer';
+}
+
+function showExcelError(msgs){
+  parsedExcelRows=[];
+  document.getElementById('excelErrors').innerHTML=msgs.join('<br>');
+  document.getElementById('excelErrors').style.display='block';
+  document.getElementById('excelPreview').style.display='none';
+  const btn=document.getElementById('applyExcelBtn');
+  btn.disabled=true;btn.style.opacity='0.4';btn.style.cursor='not-allowed';
+}
+
+function applyExcelData(){
+  if(!parsedExcelRows.length) return;
+  let applied=0;
+  parsedExcelRows.forEach(r=>{
+    const key=cellKey(r.product,r.fabric,r.height,r.breadth);
+    const old=priceData[key];
+    priceData[key]=r.price; editedCells.add(key); excelCells.add(key);
+    logChange(r.product,r.fabric,r.height,r.breadth,old,r.price,'excel');
+    applied++;
+  });
+  closeModal('excelModal'); resetExcelModal();
+  buildMatrix(); updateChangeBadge();
+  showToast(`✓ ${applied} prices loaded from Excel`,'success');
+}
+
+function downloadTemplate(){
+  const ws=XLSX.utils.aoa_to_sheet([
+    ['Product','Fabric','Height_cm','Breadth_cm','Price'],
+    ['Curtains','Standard',100,150,49.99],
+    ['Roller Blinds','Blackout',120,180,65.50],
+    ['Roman Blinds','Sheer',90,120,39.00],
+    ['Insect Screens','Standard',200,250,89.00],
+    ['Frames','Premium',150,200,110.00],
+  ]);
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,'PriceMatrix');
+  XLSX.writeFile(wb,'pricematrix_template.xlsx');
+}
+
+// ─── API ─────────────────────────────────────────────────────────────────────
+async function checkHealth(){
+  const dot=document.getElementById('statusDot'),label=document.getElementById('statusLabel'),ping=document.getElementById('apiPing');
+  dot.className='status-dot connecting';label.textContent='CONNECTING…';ping.className='api-ping';ping.textContent='…';
+  const t0=Date.now();
+  try{
+    const res=await fetch(`${apiBase()}/health`,{signal:AbortSignal.timeout(5000)});
+    const data=await res.json(); const ms=Date.now()-t0;
+    if(data.status==='ok'){
+      dot.className='status-dot';label.textContent=`CONNECTED · ${currentEnv.toUpperCase()} · AS400 READY`;
+      ping.className='api-ping ok';ping.textContent=`${ms}ms`;
+    }else throw new Error(data.db||'DB unreachable');
+  }catch(err){
+    dot.className='status-dot disconnected';label.textContent='API OFFLINE';
+    ping.className='api-ping err';ping.textContent=err.name==='TimeoutError'?'timeout':'unreachable';
+  }
+}
+
+async function loadPrices(product,fab){
+  buildMatrix();
+  const overlay=document.getElementById('matrixLoading'),msg=document.getElementById('loadingMsg');
+  overlay.classList.add('show');msg.textContent=`Loading ${product}/${fab} from ${currentEnv.toUpperCase()}…`;
+  try{
+    const res=await fetch(`${apiBase()}/prices?product=${encodeURIComponent(product)}&fabric=${encodeURIComponent(fab)}`,{signal:AbortSignal.timeout(10000)});
+    if(!res.ok){const e=await res.json();throw new Error(e.error||`HTTP ${res.status}`);}
+    const data=await res.json();let loaded=0;
+    (data.prices||[]).forEach(row=>{
+      const key=cellKey(product,fab,row.HEIGHT_CM,row.BREADTH_CM);
+      if(!editedCells.has(key)){priceData[key]=parseFloat(row.PRICE);loaded++;}
+    });
+    buildMatrix();
+    document.getElementById('lastSyncLabel').textContent=`Last sync: ${new Date().toLocaleTimeString()} (${currentEnv})`;
+    if(loaded>0) showToast(`Loaded ${loaded} prices from ${currentEnv.toUpperCase()}`, 'success');
+  }catch(err){
+    showToast(`Could not load: ${err.message}`,'error');buildMatrix();
+  }finally{overlay.classList.remove('show');}
+}
+
+async function submitToAS400(){
+  const isProd=currentEnv==='prod';
+  if(isProd&&!document.getElementById('prodConfirmChk').checked){showToast('Tick the production confirmation.','error');return;}
+  const table=document.getElementById('as400Table').value.trim();
+  const user =document.getElementById('submittedBy').value.trim();
+  const date =document.getElementById('effectiveDate').value;
+  const notes=document.getElementById('submitNotes').value.trim();
+  if(!table){showToast('Enter the AS400 table name.','error');return;}
+  if(!user) {showToast('Enter your AS400 username.','error');return;}
+
+  const payload=[];
+  editedCells.forEach(key=>{const parts=key.split('|');payload.push({height:parseFloat(parts[2]),breadth:parseFloat(parts[3]),price:priceData[key]});});
+  if(!payload.length){showToast('No changes to submit.','error');return;}
+
+  const btn=document.getElementById('confirmPushBtn');
+  btn.disabled=true;btn.textContent=`Pushing ${payload.length} records…`;
+  try{
+    const res=await fetch(`${apiBase()}/prices`,{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({product:PRODUCTS[activeProduct],fabric,submittedBy:user,effectiveDate:date,notes,records:payload,environment:currentEnv}),
+      signal:AbortSignal.timeout(30000)
+    });
+    const result=await res.json();
+    if(!res.ok) throw new Error(result.error||`Server error ${res.status}`);
+    closeModal('submitModal');
+    showToast(`✓ ${result.saved} records saved to ${currentEnv.toUpperCase()} by ${result.by}`,'success');
+    editedCells.clear();excelCells.clear();
+    document.querySelectorAll('.price-cell.edited,.price-cell.from-excel').forEach(td=>td.classList.remove('edited','from-excel'));
+    updateChangeBadge();
+  }catch(err){
+    const msg=err.name==='TimeoutError'?'Request timed out':err.message;
+    showToast(`Push failed: ${msg}`,'error');
+    document.getElementById('submitSummary').innerHTML=`<span style="color:var(--danger)">⚠ ${msg}</span><br><span style="color:var(--text-muted)">No records saved. Retry when ready.</span>`;
+  }finally{btn.disabled=false;btn.textContent='Confirm Push';}
+}
+
+// ─── BULK FILL ────────────────────────────────────────────────────────────────
+function bulkFillToggle(){const b=document.getElementById('bulkFillBar');b.style.display=b.style.display==='none'?'flex':'none';}
+function applyBulkFill(){
+  const val=parseFloat(document.getElementById('bulkValue').value);
+  if(isNaN(val)){showToast('Enter a valid price.','error');return;}
+  let filled=0;
+  heights.forEach(h=>breadths.forEach(b=>{const key=cellKey(PRODUCTS[activeProduct],fabric,h,b);if(priceData[key]===undefined){priceData[key]=val;editedCells.add(key);filled++;logChange(PRODUCTS[activeProduct],fabric,h,b,undefined,val);}}));
+  buildMatrix();showToast(`Filled ${filled} cells with ${currency}${val.toFixed(2)}`,'success');
+}
+function applyPctIncrease(){
+  const pct=parseFloat(document.getElementById('bulkPct').value);
+  if(isNaN(pct)){showToast('Enter a valid %.','error');return;}
+  let n=0;
+  heights.forEach(h=>breadths.forEach(b=>{const key=cellKey(PRODUCTS[activeProduct],fabric,h,b);if(priceData[key]!==undefined){const old=priceData[key];priceData[key]=parseFloat((old*(1+pct/100)).toFixed(2));editedCells.add(key);n++;logChange(PRODUCTS[activeProduct],fabric,h,b,old,priceData[key]);}}));
+  buildMatrix();showToast(`${pct>0?'+':''}${pct}% applied to ${n} cells.`,'success');
+}
+
+// ─── MISC ─────────────────────────────────────────────────────────────────────
+function clearEdits(){if(!confirm('Clear all unsaved changes?'))return;editedCells.forEach(k=>delete priceData[k]);editedCells.clear();excelCells.clear();buildMatrix();showToast('Changes cleared.','success');}
+function toggleChangelog(){document.getElementById('changelogPanel').classList.toggle('open');}
+function exportCSV(){
+  let csv='Product,Fabric,Height(cm),Breadth(cm),Price\n';
+  heights.forEach(h=>breadths.forEach(b=>{const key=cellKey(PRODUCTS[activeProduct],fabric,h,b);if(priceData[key]!==undefined)csv+=`${PRODUCTS[activeProduct]},${fabric},${h},${b},${priceData[key]}\n`;}));
+  const a=Object.assign(document.createElement('a'),{href:URL.createObjectURL(new Blob([csv],{type:'text/csv'})),download:`pricematrix_${PRODUCTS[activeProduct].replace(/\s/g,'_')}_${fabric}_${currentEnv}.csv`});
+  a.click();
+}
+function showToast(msg,type=''){
+  const t=document.getElementById('toast');t.textContent=msg;t.className='show '+type;
+  setTimeout(()=>t.className='',3500);
+}
+
+setInterval(()=>document.getElementById('clock').textContent=new Date().toLocaleTimeString(),1000);
+document.getElementById('currencySelect').addEventListener('change',e=>{currency=e.target.value.split(' ')[0].trim();document.querySelectorAll('.currency-prefix').forEach(el=>el.textContent=currency);});
+document.getElementById('fabricSelect').addEventListener('change',e=>{fabric=e.target.value;loadPrices(PRODUCTS[activeProduct],fabric);});
+document.querySelectorAll('.modal-overlay').forEach(o=>o.addEventListener('click',e=>{if(e.target===o)o.classList.remove('open');}));
+
+// ─── INIT ─────────────────────────────────────────────────────────────────────
+applyEnvUI();
+buildTabs();
+buildMatrix();
+checkHealth();
+loadPrices(PRODUCTS[activeProduct], fabric);
+</script>
+</body>
+</html>
